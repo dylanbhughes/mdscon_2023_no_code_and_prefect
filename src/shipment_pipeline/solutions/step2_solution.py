@@ -1,34 +1,27 @@
-import json
+import asyncio
+import os
 import uuid
 from time import sleep
 
 import pandas as pd
 import pendulum
 from google.cloud import bigquery
-from google.oauth2 import service_account
 from prefect import flow, get_run_logger
-from prefect.blocks.system import Secret
+from prefect_fivetran import FivetranCredentials
+from prefect_fivetran.connectors import (
+    trigger_fivetran_connector_sync_and_wait_for_completion,
+)
 
-# TODO: sign up for BigQuery and upload this data to a table
-# https://cloud.google.com/bigquery/docs/quickstarts/quickstart-web-ui
-# You'll need to create a table with four columns matching the schema on lines 41-44
+# TODO: add a new task to this flow that will sync a google sheet to your BigQuery
+# dataset.
+# Make a copy of this Google Sheet: https://docs.google.com/spreadsheets/d/14l1M2L6s6ceJpX72ntPQbj_V0jFFOE0V2dWtWqA13Lc/edit#gid=0
+# Make sure to create a named range (https://fivetran.com/docs/files/google-sheets/google-sheets-setup-guide)
 
 
 @flow
-def custom_pipelne(custom_job_id: str) -> None:
+async def custom_pipelne(custom_job_id: str) -> None:
     """This function simulates our custom pipeline"""
     logger = get_run_logger()
-
-    # if you don't have gcloud command line tools installed, you can use the
-    # following code to authenticate with BigQuery
-    # You'll need to create a service account and download the credentials,
-    # Then upload the credentials to Prefect Cloud as a Secret block
-    # see https://docs.prefect.io/ui/blocks/
-    # bigquery_credentials = json.loads(Secret.load("bigquery-credentials").get())
-    # credentials = service_account.Credentials.from_service_account_info(
-    #     bigquery_credentials
-    # )
-    # bq = bigquery.Client(credentials=credentials)
     bq = bigquery.Client()
 
     logger.info(f"Job ID is: {custom_job_id}")
@@ -59,7 +52,7 @@ def custom_pipelne(custom_job_id: str) -> None:
         ],
         write_disposition="WRITE_APPEND",
     )
-    # TODO: update the name of your table here
+
     job = bq.load_table_from_dataframe(
         dataframe=dataframe,
         destination="prefect-data-warehouse.mdscon.custom_pipeline",
@@ -69,13 +62,27 @@ def custom_pipelne(custom_job_id: str) -> None:
 
 
 @flow
-def data_pipeline(custom_job_id: str) -> None:
+async def data_pipeline(custom_job_id: str) -> None:
     logger = get_run_logger()
 
     logger.info(f"Custom Job ID is: {custom_job_id}")
 
-    # TODO: call the custom pipeline and pass the custom_job_id to it
+    custom_pipeline_result = await custom_pipelne(custom_job_id=custom_job_id)
+
+    # TODO: set up a Fivetran account with API Access (this may require a credit card)
+    # Create an API Key and add the credentials here: https://fivetran.com/docs/rest-api/faq/access-rest-api
+    fivetran_credentials = FivetranCredentials(
+        api_key=os.environ["FIVETRAN_API_KEY"],
+        api_secret=os.environ["FIVETRAN_API_SECRET"],
+    )
+    # TODO: make sure to add your own connector_id here
+    fivetran_sync_result = (
+        await trigger_fivetran_connector_sync_and_wait_for_completion(
+            fivetran_credentials=fivetran_credentials,
+            connector_id="avidity_readiness",
+        )
+    )
 
 
 if __name__ == "__main__":
-    data_pipeline(custom_job_id=str(uuid.uuid4()))
+    asyncio.run(data_pipeline(custom_job_id=str(uuid.uuid4())))

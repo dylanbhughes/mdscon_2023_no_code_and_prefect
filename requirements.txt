@@ -1,1 +1,9 @@
+black
+flake8-black
+ipython
+isort
 prefect
+prefect-fivetran
+google-cloud-bigquery==3.9.0
+pyarrow==11.0.0
+pandas==2.0.0

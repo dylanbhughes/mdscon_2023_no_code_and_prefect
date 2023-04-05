@@ -1,24 +1,28 @@
-import json
+import asyncio
+import os
 import uuid
 from time import sleep
 
 import pandas as pd
 import pendulum
 from google.cloud import bigquery
-from google.oauth2 import service_account
-from prefect import flow, get_run_logger
-from prefect.blocks.system import Secret
+from prefect import flow, get_run_logger, task
+from prefect_fivetran import FivetranCredentials
+from prefect_fivetran.connectors import (
+    trigger_fivetran_connector_sync_and_wait_for_completion,
+)
 
-# TODO: sign up for BigQuery and upload this data to a table
-# https://cloud.google.com/bigquery/docs/quickstarts/quickstart-web-ui
-# You'll need to create a table with four columns matching the schema on lines 41-44
+# TODO: add retry logic to the tasks in this flow. See what happens when you
+# intentionally raise an error in the task
+
+# TODO: Add retry logic to the flow itself. See what happens when you raise an
+# arbitrary error in the flow
 
 
 @flow
-def custom_pipelne(custom_job_id: str) -> None:
+async def custom_pipelne(custom_job_id: str) -> None:
     """This function simulates our custom pipeline"""
     logger = get_run_logger()
-
     # if you don't have gcloud command line tools installed, you can use the
     # following code to authenticate with BigQuery
     # You'll need to create a service account and download the credentials,
@@ -59,7 +63,7 @@ def custom_pipelne(custom_job_id: str) -> None:
         ],
         write_disposition="WRITE_APPEND",
     )
-    # TODO: update the name of your table here
+
     job = bq.load_table_from_dataframe(
         dataframe=dataframe,
         destination="prefect-data-warehouse.mdscon.custom_pipeline",
@@ -68,14 +72,44 @@ def custom_pipelne(custom_job_id: str) -> None:
     job.result()
 
 
+@task
+async def run_dbt_models() -> None:
+    """This function is a stub that represents running dbt models"""
+    logger = get_run_logger()
+    logger.info("Running dbt models...")
+    logger.info("Models ran successfully!")
+
+
+@task
+async def send_slack_notification() -> None:
+    """This function is a stub that represents sending a Slack notification"""
+    logger = get_run_logger()
+    logger.info("Sending Slack notification...")
+    logger.info("Notification sent successfully!")
+
+
 @flow
-def data_pipeline(custom_job_id: str) -> None:
+async def data_pipeline(custom_job_id: str) -> None:
     logger = get_run_logger()
 
     logger.info(f"Custom Job ID is: {custom_job_id}")
 
-    # TODO: call the custom pipeline and pass the custom_job_id to it
+    custom_pipeline_result = await custom_pipelne(custom_job_id=custom_job_id)
+
+    fivetran_credentials = FivetranCredentials(
+        api_key=os.environ["FIVETRAN_API_KEY"],
+        api_secret=os.environ["FIVETRAN_API_SECRET"],
+    )
+    fivetran_sync_result = (
+        await trigger_fivetran_connector_sync_and_wait_for_completion(
+            fivetran_credentials=fivetran_credentials,
+            connector_id="avidity_readiness",
+        )
+    )
+
+    dbt_model_result = await run_dbt_models.submit()
+    slack_result = await send_slack_notification.submit(wait_for=[dbt_model_result])
 
 
 if __name__ == "__main__":
-    data_pipeline(custom_job_id=str(uuid.uuid4()))
+    asyncio.run(data_pipeline(custom_job_id=str(uuid.uuid4())))
